@@ -1,0 +1,10 @@
+# QR cache
+bilibili_qr_*.png
+# Cookie
+.bili_cookie
+# Logs
+logs/
+# Python cache
+__pycache__/
+# Node
+node_modules/
