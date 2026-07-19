@@ -448,10 +448,23 @@ function execWebFetch(args) {
 function fetchOne(u) {
     return new Promise(resolve => {
         try { new URL(u); } catch { resolve({ [u]: { error: 'Invalid URL' } }); return; }
+        // ★ 扩展名检测: 直接跳过图片/视频/音频/二进制文件
+        const skipExts = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico|mp4|webm|avi|mov|mp3|wav|ogg|flac|pdf|zip|tar|gz|rar|exe|bin|docx?|xlsx?|pptx?)(\?|$)/i;
+        if (skipExts.test(u)) {
+            resolve({ [u]: { error: 'Unsupported content type (binary/image/video/audio file)', url: u } });
+            return;
+        }
         const mod = u.startsWith('https') ? https : http;
         const timer = setTimeout(() => resolve({ [u]: { error: 'Timeout' } }), 10000);
         mod.get(u, { timeout: 10000 }, resp => {
             clearTimeout(timer);
+            // ★ Content-Type 检测: 非文本/HTML/JSON 直接跳过
+            const ct = (resp.headers['content-type'] || '').toLowerCase();
+            if (ct && !ct.includes('text/') && !ct.includes('html') && !ct.includes('json') && !ct.includes('xml')) {
+                resp.destroy();
+                resolve({ [u]: { error: 'Non-text content type: ' + ct + '. Use analyze_image for images.', url: u } });
+                return;
+            }
             let raw = '';
             resp.on('data', c => { raw += c; if (raw.length > 512000) resp.destroy(); });
             resp.on('end', () => {
