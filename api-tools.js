@@ -12,6 +12,7 @@ const SPECIAL_TOOLS = [
     { name: "web_search", description: "搜索互联网获取实时信息。", inputSchema: { type: "object", properties: { query: { type: "string", description: "搜索关键词" }, max_results: { type: "integer", description: "最大结果数，默认5" } }, required: ["query"] } },
     { name: "web_fetch", description: "抓取网页内容提取文本信息。", inputSchema: { type: "object", properties: { urls: { type: "array", items: { type: "string" }, description: "要抓取的URL列表" } }, required: ["urls"] } },
     { name: "generate_image", description: "使用AI生成图片。", inputSchema: { type: "object", properties: { prompt: { type: "string", description: "图片生成提示词" } }, required: ["prompt"] } },
+    { name: "get_current_time", description: "获取当前精确时间和日期。用于判断今天某个事件是否已发生、计算时差、确认时区等。返回: 日期+时间+星期+时区+Unix时间戳。", inputSchema: { type: "object", properties: {}, required: [] } },
 ];
 
 // ── Engine tool cache ──
@@ -195,6 +196,7 @@ async function execTool(name, args) {
         case 'web_search': return execWebSearch(args);
         case 'web_fetch': return execWebFetch(args);
         case 'generate_image': return execImageGen(args);
+        case 'get_current_time': return execGetCurrentTime();
         case 'analyze_image': return execAnalyzeImage(args);
         case 'video_understanding': return execAnalyzeImage(args);  // same vision analysis
         case 'engine_push': return execPushFile(args);
@@ -215,6 +217,29 @@ async function execTool(name, args) {
             if (enginePath) return execEngineProxy(enginePath, args);
             throw new Error('No handler for: ' + name);
     }
+}
+
+// ── get_current_time ──
+function execGetCurrentTime() {
+    const now = new Date();
+    const daysZh = ['周日','周一','周二','周三','周四','周五','周六'];
+    const pad = n => n < 10 ? '0' + n : '' + n;
+    const off = -Math.round(now.getTimezoneOffset() / 60);
+    const tz = 'UTC' + (off >= 0 ? '+' : '') + off + ' (Asia/Shanghai)';
+    const iso = now.toISOString();
+    const dateStr = now.getFullYear() + '年' + (now.getMonth()+1) + '月' + now.getDate() + '日';
+    const timeStr = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+    return Promise.resolve({
+        datetime: dateStr + ' ' + timeStr + ' ' + daysZh[now.getDay()],
+        date: dateStr,
+        time: timeStr,
+        weekday: daysZh[now.getDay()],
+        timezone: tz,
+        iso: iso,
+        unix_ms: now.getTime(),
+        // ★ 辅助判断: 当前时段 (凌晨/上午/中午/下午/晚上)
+        period: now.getHours() < 6 ? '凌晨' : now.getHours() < 9 ? '早晨' : now.getHours() < 12 ? '上午' : now.getHours() < 14 ? '中午' : now.getHours() < 18 ? '下午' : now.getHours() < 22 ? '晚上' : '深夜',
+    });
 }
 
 // ── MiniMax CLI 执行 ──
