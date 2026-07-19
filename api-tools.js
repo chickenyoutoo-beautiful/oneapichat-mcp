@@ -67,10 +67,10 @@ const EXTRA_TOOLS = [
     { name: "server_docker", description: "Docker容器管理：ps/start/stop/logs。", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["ps","start","stop","logs","restart"] }, name: { type: "string" } }, required: ["action"] } },
     { name: "server_db_query", description: "查询SQLite数据库。", inputSchema: { type: "object", properties: { sql: { type: "string" } }, required: ["sql"] } },
     // 媒体/创作
-    { name: "generate_ppt", description: "生成PPT演示文稿。", inputSchema: { type: "object", properties: { topic: { type: "string", description: "PPT主题" }, slides: { type: "integer" }, style: { type: "string" } }, required: ["topic"] } },
+    { name: "generate_ppt", description: "生成PPT演示文稿。pages为JSON数组:[{type:'cover',title:'标题',subtitle:'副标题'},{type:'divider',title:'章节'},{type:'card_grid',rows:2,cols:2,cards:[{title:'卡片',bullets:['要点1']}]}]。", inputSchema: { type: "object", properties: { title: { type: "string", description: "PPT标题" }, pages: { type: "string", description: "页面JSON数组" }, theme: { type: "string", description: "主题:default/modern/dark" }, filename: { type: "string" } }, required: ["title","pages"] } },
     { name: "video_understanding", description: "分析理解视频内容。", inputSchema: { type: "object", properties: { url: { type: "string" }, query: { type: "string" } }, required: ["url"] } },
-    { name: "analyze_image", description: "分析图片内容。", inputSchema: { type: "object", properties: { image_url: { type: "string" }, prompt: { type: "string" } }, required: ["image_url"] } },
-    { name: "rag_search", description: "搜索知识库(RAG)获取私有文档信息。", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+    { name: "analyze_image", description: "分析图片内容。支持URL或base64。", inputSchema: { type: "object", properties: { image_url: { type: "string", description: "图片URL或base64(data:image/...)" }, image: { type: "string", description: "图片URL或base64(同image_url)" }, prompt: { type: "string", description: "分析提示" } }, required: [] } },
+    { name: "rag_search", description: "搜索知识库(RAG)获取私有文档信息。", inputSchema: { type: "object", properties: { q: { type: "string", description: "搜索查询" }, collection: { type: "string", description: "知识库名称,默认default" }, top_k: { type: "integer", description: "返回条数,默认5" } }, required: ["q"] } },
     // 文档生成
     { name: "generate_docx", description: "生成 Word 文档(.docx)。content 为 JSON 数组 [{type:'h1'|'h2'|'p'|'bullet', text:''}]。", inputSchema: { type: "object", properties: { title: { type: "string", description: "文档标题" }, content: { type: "string", description: "内容JSON数组" }, filename: { type: "string" } }, required: ["title","content"] } },
     { name: "generate_xlsx", description: "生成 Excel 表格(.xlsx)。rows 为 JSON 二维数组, headers 为可选的 JSON 字符串数组。", inputSchema: { type: "object", properties: { title: { type: "string", description: "表格标题" }, rows: { type: "string", description: "数据行JSON数组" }, headers: { type: "string", description: "表头JSON数组" }, filename: { type: "string" } }, required: ["rows"] } },
@@ -104,6 +104,8 @@ const EXTRA_TOOLS = [
     { name: "cr_delete_share", description: "删除分享链接。", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
     { name: "cr_storage_info", description: "查询云盘存储空间。", inputSchema: { type: "object", properties: {}, required: [] } },
     { name: "cr_overview", description: "云盘概览(文件数+存储+分享)。", inputSchema: { type: "object", properties: {}, required: [] } },
+    // Chaoxing QR 登录
+    { name: "chaoxing_qr_login", description: "超星学习通扫码登录。①action=qr或auto→生成QR(立即返回,非阻塞) ②拿到enc+uuid后立即调action=login(enc,uuid)→阻塞等待用户扫码。login会先用传入的enc/uuid轮询;若QR过期则返回新QR→重复①②直到登录成功。不要跳过第①步!", inputSchema: { type: "object", properties: { action: { type: "string", description: "check=检查cookie / qr或auto=生成二维码(非阻塞) / login=等待扫码(阻塞,传入enc+uuid优先)", enum: ["check", "qr", "auto", "login"] }, enc: { type: "string", description: "login时传入(由qr/auto步骤返回)" }, uuid: { type: "string", description: "login时传入(由qr/auto步骤返回)" }, timeout: { type: "integer", description: "login超时秒数,默认300" } }, required: ["action"] } },
 ];
 
 // ── Engine proxy — comprehensive routing ──
@@ -122,7 +124,7 @@ const ENGINE_MAP = {
     platform_extract: 'platform_extract', run_skill: 'skills/run',
     video_edit: 'video_edit', video_understanding: 'video/understanding',
     generate_ppt: 'ppt/generate', generate_image: 'image/generate',
-    analyze_image: 'image/analyze', rag_search: 'rag/search',
+    rag_search: 'rag/search',
     // 文档生成
     generate_docx: 'docx/generate', generate_xlsx: 'xlsx/generate', generate_pdf: 'pdf/generate',
     // Cloudreve 云盘
@@ -193,8 +195,14 @@ async function execTool(name, args) {
         case 'web_search': return execWebSearch(args);
         case 'web_fetch': return execWebFetch(args);
         case 'generate_image': return execImageGen(args);
+        case 'analyze_image': return execAnalyzeImage(args);
+        case 'video_understanding': return execAnalyzeImage(args);  // same vision analysis
         case 'engine_push': return execPushFile(args);
         default:
+            // ★ Chaoxing QR 登录: 独立 Python 脚本
+            if (name === 'chaoxing_qr_login') {
+                return execChaoxingQrLogin(args);
+            }
             // ★ Bilibili 工具: 委托给 bilibili-tools.js
             if (name.startsWith('bilibili_')) {
                 return execBilibiliTool(name, args);
@@ -273,6 +281,36 @@ function execMmxTool(name, args) {
     });
 }
 
+// ── analyze_image → MCP 自带的 Vision 分析 ──
+function execAnalyzeImage(args) {
+    return new Promise((resolve, reject) => {
+        // Accept image_url, image, or url parameter
+        const imageUrl = args.image_url || args.image || args.url || '';
+        const prompt = args.prompt || args.query || '请详细描述这张图片的内容';
+        if (!imageUrl) return reject(new Error('缺少图片参数(image_url/image/url)'));
+
+        const body = JSON.stringify({ image_url: imageUrl, prompt: prompt });
+        const opts = {
+            hostname: '127.0.0.1', port: 18788, path: '/mcp/analyze',
+            method: 'POST', timeout: 120000,
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        };
+        const req = require('http').request(opts, (resp) => {
+            let raw = '';
+            resp.on('data', c => raw += c);
+            resp.on('end', () => {
+                try {
+                    const data = JSON.parse(raw);
+                    resolve({ result: data.result || data, status: 'ok' });
+                } catch(e) { resolve({ result: raw }); }
+            });
+        });
+        req.on('error', (e) => reject(e));
+        req.write(body);
+        req.end();
+    });
+}
+
 // ── Engine HTTP proxy ──
 function execEngineProxy(ep, args) {
     return new Promise((resolve, reject) => {
@@ -341,6 +379,38 @@ function execEngineProxy(ep, args) {
         req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
         if (opts.method === 'POST' && opts.headers) req.write(opts.headers['Content-Length'] ? (postBodies.includes(ep) ? JSON.stringify(args) : args.code || JSON.stringify(args)) : '');
         req.end();
+    });
+}
+
+// ── Chaoxing QR 登录 ──
+const CX_LOGIN_SCRIPT = '/home/naujtrats/mcp-server/chaoxing-login.py';
+
+function execChaoxingQrLogin(args) {
+    return new Promise((resolve, reject) => {
+        const action = args.action || 'auto';
+        let cmdStr, execTimeout;
+        if (action === 'check' || action === 'qr' || action === 'auto') {
+            // 非阻塞: check/qr/auto 立即返回
+            cmdStr = `python3 ${CX_LOGIN_SCRIPT} ${action}`;
+            execTimeout = 30000;
+        } else {
+            // login/poll (阻塞): 优先用传入的 enc/uuid, 过期则返回新QR
+            const enc = args.enc || '';
+            const uuid = args.uuid || '';
+            const timeout = args.timeout || 300;
+            cmdStr = `python3 ${CX_LOGIN_SCRIPT} login ${enc} ${uuid} ${timeout}`;
+            execTimeout = 360000;
+        }
+
+        exec(cmdStr, { timeout: execTimeout, maxBuffer: 2 * 1024 * 1024 }, (err, stdout, stderr) => {
+            if (err && !stdout.trim()) { reject(new Error('Chaoxing login error: ' + err.message)); return; }
+            try {
+                const result = JSON.parse(stdout.trim());
+                resolve(result);
+            } catch (e) {
+                resolve({ ok: false, error: 'Parse error', raw: (stdout + stderr).trim().substring(0, 300) });
+            }
+        });
     });
 }
 

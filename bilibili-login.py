@@ -269,7 +269,7 @@ async def auto_login(timeout: int = 120):
     return {
         "ok": False,
         "status": "qr_ready",
-        "message": "二维码已生成，请用哔哩哔哩客户端扫描。扫描后调用 bilibili_qr_login action=poll 检查状态。",
+        "message": "⚠️ 二维码已生成，请立即用 bilibili_qr_login(action=poll, qrcode_key=\"" + qr.get("qrcode_key", "") + "\") 阻塞等待用户扫码。不要回复用户，先调 poll！",
         "qr_image_base64": qr.get("qr_image_base64", ""),
         "qr_image_url": qr.get("qr_image_url", ""),
         "qrcode_key": qr.get("qrcode_key", ""),

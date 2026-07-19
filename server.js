@@ -237,8 +237,12 @@ async function handleAnalyze(req, res) {
             let result;
             let apiUsed = 'none';
 
-            // 尝试调用 Vision API
-            if (VISION_CONFIG.apiKey) {
+            // ★ Vision API Key 优先从环境变量, fallback 到 MiniMax 配置
+            let visionKey = VISION_CONFIG.apiKey || getMmxApiKey();
+            if (visionKey) {
+                // Temporarily patch VISION_CONFIG for callVisionAPI
+                const origKey = VISION_CONFIG.apiKey;
+                VISION_CONFIG.apiKey = visionKey;
                 try {
                     log('INFO', '调用 MiniMax Vision API', { model: VISION_CONFIG.model });
                     result = await callVisionAPI(image, data.prompt);
@@ -253,14 +257,17 @@ async function handleAnalyze(req, res) {
                     } else if (msg && (msg.includes('invalid') || msg.includes('Invalid') || msg.includes('无效'))) {
                         // 图片数据无效（太小、损坏、不支持）
                         result = '[图片分析失败] 图片数据无效，可能是图片太小、格式不支持或已损坏。建议：1) 尝试更大的图片（至少10x10像素）2) 转换为 JPEG/PNG 格式 3) 重新截图后上传。';
+                    } else if (msg && (msg.includes('用量上限') || msg.includes('上限') || msg.includes('exhausted'))) {
+                        result = '[图片分析失败] MiniMax Token Plan 用量已耗尽，请升级套餐或购买积分。链接: https://platform.minimaxi.com';
                     } else {
                         // 其他错误
                         result = '[图片分析失败] ' + (msg || '未知错误');
                     }
                     apiUsed = 'fallback';
                 }
+                VISION_CONFIG.apiKey = origKey;  // 恢复原值
             } else {
-                log('WARN', '未配置 VISION_API_KEY，使用文本降级');
+                log('WARN', '未配置 VISION_API_KEY 且无 MiniMax 配置,使用文本降级');
                 result = textFallbackResponse(data.prompt);
                 apiUsed = 'fallback';
             }

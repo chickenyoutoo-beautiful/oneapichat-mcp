@@ -8,3 +8,8 @@ logs/
 __pycache__/
 # Node
 node_modules/
+chaoxing_qr_*.png
+bilibili_qr_*.png
+.cx_cookie
+image_*.jpg
+.bili_cookie
