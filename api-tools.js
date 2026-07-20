@@ -113,7 +113,8 @@ const EXTRA_TOOLS = [
 const ENGINE_MAP = {
     // 服务器工具
     server_sys_info: 'sys/info', server_file_read: 'file/read', server_file_write: 'file/write',
-    server_file_append: 'file/write', server_file_search: 'file_search', server_file_grep: 'file_grep',
+    server_file_append: 'file/write', server_file_write_chunked: 'file/write_chunked',
+    server_file_search: 'file_search', server_file_grep: 'file_grep',
     server_file_edit: 'file_edit', server_file_op: 'file_op', server_exec: 'exec',
     server_python: 'python', server_ps: 'ps', server_disk: 'disk', server_network: 'network',
     server_docker: 'docker', server_db_query: 'db_query',
@@ -381,16 +382,33 @@ function execEngineProxy(ep, args) {
             else if (typeof v === 'object') qs += `&${encodeURIComponent(k)}=${encodeURIComponent(JSON.stringify(v))}`;
         }
 
-        const opts = { hostname: '127.0.0.1', port: 8766, path: `/engine/${ep}?${qs}`, method: 'GET', timeout: 60000 };
-        const postBodies = ['file/write', 'file/append', 'file_edit', 'python', 'skills/run', 'video_edit'];
+        // ★ 大文件写入/超长命令 → 更长的超时
+        const largeOps = ['file/write', 'file/write_chunked', 'file/append', 'python', 'video_edit'];
+        const timeout = largeOps.includes(ep) ? 120000 : 60000;
+        const opts = { hostname: '127.0.0.1', port: 8766, path: `/engine/${ep}?${qs}`, method: 'GET', timeout };
+
+        const postBodies = ['file/write', 'file/write_chunked', 'file/append', 'file_edit', 'python', 'skills/run', 'video_edit'];
+        let postBody = null;
         if (postBodies.includes(ep)) {
             opts.method = 'POST';
-            let postBody = '';
-            if (ep === 'file_edit') postBody = JSON.stringify({ path: args.path, old_string: args.old_string, new_string: args.new_string });
-            else if (ep === 'file/write') postBody = JSON.stringify({ path: args.path, content: args.content, mode: args.mode || 'overwrite' });
-            else if (ep === 'python') postBody = args.code || args.script || '';
-            else if (ep === 'skills/run') postBody = JSON.stringify({ name: args.name, args });
-            else postBody = JSON.stringify(args);
+            // ★ 构建 JSON body — 确保 Content-Length 与 body 一致
+            if (ep === 'file/write') {
+                postBody = JSON.stringify({ path: args.path, content: args.content, mode: args.mode || 'overwrite' });
+            } else if (ep === 'file/write_chunked') {
+                postBody = JSON.stringify({
+                    path: args.path, chunk_index: Number(args.chunk_index || 0),
+                    total_chunks: Number(args.total_chunks || 1), content: args.content || '',
+                    final: args.final === true || args.final === 'true' || args.final === 1,
+                });
+            } else if (ep === 'file_edit') {
+                postBody = JSON.stringify({ path: args.path, old_string: args.old_string, new_string: args.new_string });
+            } else if (ep === 'python') {
+                postBody = args.code || args.script || '';
+            } else if (ep === 'skills/run') {
+                postBody = JSON.stringify({ name: args.name, args });
+            } else {
+                postBody = JSON.stringify(args);
+            }
             opts.headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postBody) };
         }
 
@@ -402,7 +420,7 @@ function execEngineProxy(ep, args) {
         });
         req.on('error', e => reject(new Error('Engine error: ' + e.message)));
         req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
-        if (opts.method === 'POST' && opts.headers) req.write(opts.headers['Content-Length'] ? (postBodies.includes(ep) ? JSON.stringify(args) : args.code || JSON.stringify(args)) : '');
+        if (postBody) req.write(postBody);
         req.end();
     });
 }
